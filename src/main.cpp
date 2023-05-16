@@ -51,7 +51,7 @@ const uint8_t LED_PIN = D1;
 // char *password_STATION = "dr0wss@p";
 String ssid_STATION = "1011001";
 String password_STATION = "dr0wss@p";
-String ssid_AP = "Modular_Switch_Control_System";
+String ssid_AP = "Smart_Bell";
 String password_AP = "dr0wss@p";
 bool isModeStation = true;
 const int timeOffsetHour = 5;
@@ -74,14 +74,7 @@ ESP8266WebServer server(80);
 void setup()
 {
   Serial.begin(9600);
-
-
-  // wifi.resetSettings();
-  // ESP.eraseConfig();
-
-
   preferences.begin("my-app", false);
-  // preferences.clear();
   establishNetwork();
   pinMode(LED_PIN, OUTPUT);
   syncTime();
@@ -100,10 +93,6 @@ void loop()
 {
   digitalWrite(LED_PIN, lightStatus());
   server.handleClient();
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    establishNetwork(); 
-  }
   delay(1000);
 }
 
@@ -130,42 +119,39 @@ bool lightStatus()
 
 void establishNetwork()
 {
-  // wifi.resetSettings();
-  // WiFi.disconnect();
-  // ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
-  // password_STATION = preferences.getString("password_STATION",password_STATION);
-  // ssid_AP = preferences.getString("ssid_AP",ssid_AP);
-  // password_AP = preferences.getString("password_AP",password_AP);
+  WiFi.disconnect();
 
-  // if(isModeStation)
-  // {
-  //   Serial.println("attemptin saved network");
-  //   Serial.println("SSID : " + ssid_STATION);
-  //   Serial.println("PWD  : " + password_STATION);
-    
-  //   WiFi.mode(WIFI_STA);
-  //   WiFi.begin(ssid_STATION,password_STATION);
+  ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
+  password_STATION = preferences.getString("password_STATION",password_STATION);
+  ssid_AP = preferences.getString("ssid_AP",ssid_AP);
+  password_AP = preferences.getString("password_AP",password_AP);
 
-  //   //WAIT 10 SEC FOR CONNECTION
-  //   for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
-  //     delay(500);
-  //     Serial.print(".");
-  //   }
+  WiFi.mode(WIFI_AP_STA);
+  if(WiFi.softAP(ssid_AP,password_AP)){
+    Serial.print("Soft ap successful \n IP : ");
+    Serial.println(WiFi.softAPIP());
+  }else
+  {
+    Serial.println("Soft AP unsuccessful!");
+  }
+  //starts hotspot
+  WiFi.begin(ssid_STATION,password_STATION);// start connection
+  
+  //WAIT 10 SEC FOR CONNECTION
+  for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+    delay(500);
+    Serial.println("Connecting to wifi ..");
+  }
 
-  //   if(WiFi.status() != WL_CONNECTED)
-  //     wifi.startConfigPortal();
-
-  //   if(WiFi.status() == WL_CONNECTED)
-  //   {
-  //     reconnectNetworkWithCustomIP();
-  //     saveCredentialsSTATION();
-  //     Serial.println(WiFi.localIP());
-  //     return;
-  //   }
-  // }dadada
-
-  // WiFi.mode(WIFI_AP);
-  // WiFi.begin(ssid_AP,password_AP);
+  if(WiFi.status() == WL_CONNECTED)
+  {
+    reconnectNetworkWithCustomIP();
+    saveCredentialsSTATION();
+    Serial.print("Station Connection Successful!\nIP : ");
+    Serial.println(WiFi.localIP());
+  }else {
+    Serial.println("Station Connection Unsuccessful!to\nSSID : "+ssid_STATION + "\nPWD : "+password_STATION);
+  }
 }
 void saveCredentialsSTATION(){
     ssid_STATION = WiFi.SSID();
@@ -180,8 +166,6 @@ void reconnectNetworkWithCustomIP(){
       {
         IPAddress IP = WiFi.gatewayIP();
         IP[3] = custom_ip;
-        // wifi.setSTAStaticIPConfig(IP, WiFi.gatewayIP(), WiFi.subnetMask());
-        // wifi.autoConnect(ssid_STATION.c_str(),ssid_AP.c_str());
         WiFi.config(IP,WiFi.gatewayIP(),WiFi.subnetMask());
       }
 }
