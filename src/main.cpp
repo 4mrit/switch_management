@@ -130,42 +130,42 @@ bool lightStatus()
 
 void establishNetwork()
 {
-  wifi.resetSettings();
-  WiFi.disconnect();
-  ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
-  password_STATION = preferences.getString("password_STATION",password_STATION);
-  ssid_AP = preferences.getString("ssid_AP",ssid_AP);
-  password_AP = preferences.getString("password_AP",password_AP);
+  // wifi.resetSettings();
+  // WiFi.disconnect();
+  // ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
+  // password_STATION = preferences.getString("password_STATION",password_STATION);
+  // ssid_AP = preferences.getString("ssid_AP",ssid_AP);
+  // password_AP = preferences.getString("password_AP",password_AP);
 
-  if(isModeStation)
-  {
-    Serial.println("attemptin saved network");
-    Serial.println("SSID : " + ssid_STATION);
-    Serial.println("PWD  : " + password_STATION);
+  // if(isModeStation)
+  // {
+  //   Serial.println("attemptin saved network");
+  //   Serial.println("SSID : " + ssid_STATION);
+  //   Serial.println("PWD  : " + password_STATION);
     
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid_STATION,password_STATION);
+  //   WiFi.mode(WIFI_STA);
+  //   WiFi.begin(ssid_STATION,password_STATION);
 
-    //WAIT 10 SEC FOR CONNECTION
-    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
-      delay(500);
-      Serial.print(".");
-    }
+  //   //WAIT 10 SEC FOR CONNECTION
+  //   for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+  //     delay(500);
+  //     Serial.print(".");
+  //   }
 
-    if(WiFi.status() != WL_CONNECTED)
-      wifi.startConfigPortal();
+  //   if(WiFi.status() != WL_CONNECTED)
+  //     wifi.startConfigPortal();
 
-    if(WiFi.status() == WL_CONNECTED)
-    {
-      reconnectNetworkWithCustomIP();
-      saveCredentialsSTATION();
-      Serial.println(WiFi.localIP());
-      return;
-    }
-  }
+  //   if(WiFi.status() == WL_CONNECTED)
+  //   {
+  //     reconnectNetworkWithCustomIP();
+  //     saveCredentialsSTATION();
+  //     Serial.println(WiFi.localIP());
+  //     return;
+  //   }
+  // }dadada
 
-  WiFi.mode(WIFI_AP);
-  WiFi.begin(ssid_AP,password_AP);
+  // WiFi.mode(WIFI_AP);
+  // WiFi.begin(ssid_AP,password_AP);
 }
 void saveCredentialsSTATION(){
     ssid_STATION = WiFi.SSID();
