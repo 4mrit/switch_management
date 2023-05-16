@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "*.embeddedhtml": "html",
+        "array": "cpp",
+        "memory": "cpp",
+        "ranges": "cpp",
+        "functional": "cpp",
+        "tuple": "cpp",
+        "utility": "cpp",
+        "variant": "cpp",
+        "cmath": "cpp"
+    }
+}
