@@ -92,6 +92,7 @@ void setup()
 void loop()
 {
   digitalWrite(LED_PIN, lightStatus());
+  // dnsServer.processNextRequest();
   server.handleClient();
   delay(1000);
 }
@@ -119,17 +120,21 @@ bool lightStatus()
 
 void establishNetwork()
 {
-  WiFi.disconnect();
-
   ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
   password_STATION = preferences.getString("password_STATION",password_STATION);
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
 
+  WiFi.disconnect();
+
+  IPAddress apIP(192, 168, 1, custom_ip); // New AP IP address
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+
   WiFi.mode(WIFI_AP_STA);
   if(WiFi.softAP(ssid_AP,password_AP)){
     Serial.print("Soft ap successful \n IP : ");
     Serial.println(WiFi.softAPIP());
+    // dnsServer.start(53, "*", WiFi.softAPIP());
   }else
   {
     Serial.println("Soft AP unsuccessful!");
