@@ -125,6 +125,9 @@ void establishNetwork()
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
 
+  ssid_STATION = "1011001";
+  password_STATION = "dr0wss@p";
+
   WiFi.disconnect();
 
   IPAddress apIP(192, 168, 1, custom_ip); // New AP IP address
@@ -150,9 +153,10 @@ void establishNetwork()
 
   if(WiFi.status() == WL_CONNECTED)
   {
-    reconnectNetworkWithCustomIP();
-    saveCredentialsSTATION();
     Serial.print("Station Connection Successful!\nIP : ");
+    Serial.println(WiFi.localIP());
+    // reconnectNetworkWithCustomIP();
+    saveCredentialsSTATION();
     Serial.println(WiFi.localIP());
   }else {
     Serial.println("Station Connection Unsuccessful!to\nSSID : "+ssid_STATION + "\nPWD : "+password_STATION);
@@ -235,10 +239,33 @@ void startWebServer_EXPIRED()
 void handleRoot_GET()
 {
   Serial.println("handling / get request");
-  String html = "<html><head><meta charset='UTF-8'><title>Light Scheduler</title></head><body>";
-  html += "<h1>Light Scheduler ";
-  html += "<form style='display:inline-block' method='GET' action='/settings'><button type='submit'>⚙️ Settings</button></form></h1>";
-  html += "<table><tr><th>Start Time</th><th>Duration</th></tr>";
+
+
+
+  // String html = "<html><head><meta charset='UTF-8'><title>Light Scheduler</title></head><body>";
+  // html += "<h1>Light Scheduler ";
+  // html += "<form style='display:inline-block' method='GET' action='/settings'><button type='submit'>⚙️ Settings</button></form></h1>";
+  // html += "<table><tr><th>Start Time</th><th>Duration</th></tr>";
+
+  String html = R"(
+    <html>
+      <head>
+        <meta charset='UTF-8'><title>Light Scheduler</title>
+      </head>
+      <body>
+        <h1>
+          Light Scheduler 
+          <form style='display:inline-block' method='GET' action='/settings'>
+            <button type='submit'>⚙️ Settings</button>
+          </form>
+        </h1>
+        <table>
+          <tr>
+            <th>Start Time</th>
+            <th>Duration</th>
+          </tr>
+  )";
+
   char *format = "";
   int start_time_hour;
 
@@ -252,19 +279,47 @@ void handleRoot_GET()
     else
       start_time_hour = schedules[i].start_time_hour;
 
-    html += "<tr><td>" + String(start_time_hour) + ":" + String(schedules[i].start_time_min) + " " + format + "</td>";
-    html += "<td>" + String(schedules[i].duration) + " min</td>";
-    // html += "<td><button id='btn";
-    html += "<td><form method='POST' action='/delete-schedule'><input type='hidden' name='index' value=";
-    html += i;
-    html += "><button type='submit'>Delete</button></form></td></tr>";
+    // html += "<tr><td>" + String(start_time_hour) + ":" + String(schedules[i].start_time_min) + " " + format + "</td>";
+    // html += "<td>" + String(schedules[i].duration) + " min</td>";
+    // // html += "<td><button id='btn";
+    // html += "<td><form method='POST' action='/delete-schedule'><input type='hidden' name='index' value=";
+    // html += i;
+    // html += "><button type='submit'>Delete</button></form></td></tr>";
+    html += R"(
+      <tr>
+        <td>)"+ String(start_time_hour) +":" + String(schedules[i].start_time_min) + " " + format + R"(</td>
+        <td>)" + String(schedules[i].duration) + R"( min</td>
+        // <td>
+        //   <button id='btn'>
+        // </td>
+        <td>
+          <form method='POST' action='/delete-schedule'>
+            <input type='hidden' name='index' value=")" + i + R"(">
+            <button type='submit'>Delete</button>
+          </form>
+        </td>
+      </tr>
+    )"; 
   }
 
-  html += "</table><br><br><form method='POST'>";
-  html += "Start Time: <input type='time' name='start_time'><br><br>";
-  html += "Duration : &nbsp&nbsp<input type='text' name='duration' placeholder='minutes'><br><br>";
-  html += "<input type='submit' value='Save'>";
-  html += "</form><form method='POST' action='/delete-all-schedule'><button type='submit'>Delete All Schedules</button></form></body></html>";
+  html += R"(
+        </table><br><br>
+        <form method='POST'>
+          Start Time: <input type='time' name='start_time'><br><br>
+          Duration : &nbsp&nbsp<input type='text' name='duration' placeholder='minutes'><br><br>
+          <input type='submit' value='Save'>
+        </form>
+        <form method='POST' action='/delete-all-schedule'>
+          <button type='submit'>Delete All Schedules</button>
+        </form>
+      </body>
+    </html>
+  )";
+  // html += "</table><br><br><form method='POST'>";
+  // html += "Start Time: <input type='time' name='start_time'><br><br>";
+  // html += "Duration : &nbsp&nbsp<input type='text' name='duration' placeholder='minutes'><br><br>";
+  // html += "<input type='submit' value='Save'>";
+  // html += "</form><form method='POST' action='/delete-all-schedule'><button type='submit'>Delete All Schedules</button></form></body></html>";
 
   server.send(200, "text/html", html);
 }
