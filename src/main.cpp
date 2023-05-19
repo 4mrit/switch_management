@@ -93,8 +93,11 @@ void setup()
 void loop()
 {
   digitalWrite(LED_PIN, lightStatus());
-  // dnsServer.processNextRequest();
   server.handleClient();
+  if(WiFi.status() != WL_CONNECTED)  {
+    //retry connection when connection is lost
+    WiFi.begin(ssid_STATION,password_STATION);
+  }
   delay(1000);
 }
 
@@ -125,9 +128,6 @@ void establishNetwork()
   password_STATION = preferences.getString("password_STATION",password_STATION);
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
-
-  // WiFi.disconnect(true);
-  // WiFi.softAPdisconnect(true);
 
   WiFi.mode(WIFI_AP_STA);
   //starts hotspot
@@ -359,6 +359,7 @@ void handleDeleteAllSchedule_POST()
 
 void handleSettings_GET()
 {
+  String wifi_state = WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected";
   String html = R"(
   <html>
     <head>
@@ -368,9 +369,7 @@ void handleSettings_GET()
   <body>
     <h1>Configuration Page</h1>
     <form method='POST' action="/settings">
-        <h3>Network Mode:</h3>
-        <input type='radio' name='network_mode' value = 'ap' onclick='changeLabel(this.value)'> Hotspot ( AP )<br/>
-        <input type='radio' value="station" name='network_mode' onclick='changeLabel(this.value)'> Wi-Fi ( station )
+        <h3>Network : )"+ wifi_state+ R"(</h3>
         <h3>IP Address</h3>192.168.1. 
         <input type="number" name="ip" min="10" max="250" placeholder=")" +
                 String(custom_ip) + R"(" style="width:4em"/><br/>
