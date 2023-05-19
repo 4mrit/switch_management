@@ -126,10 +126,12 @@ void establishNetwork()
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
 
-  
+  // WiFi.disconnect(true);
+  // WiFi.softAPdisconnect(true);
+
   WiFi.mode(WIFI_AP_STA);
   //starts hotspot
-  
+  WiFi.config(IPAddress(),IPAddress(),IPAddress());
   WiFi.begin(ssid_STATION,password_STATION);// start connection
   //WAIT 10 SEC FOR CONNECTION
   for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
@@ -185,7 +187,8 @@ bool syncTime()
 {
   configTime(timeOffsetHour * 3600 + timeOffsetMin * 60, 0,
              "pool.ntp.org",
-             "time.google.com");
+             "time.google.com"
+             );
   if (time(nullptr))
   {
     Serial.printf("Time Syncronization Successful \n");
