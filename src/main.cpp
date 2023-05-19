@@ -41,8 +41,9 @@ bool syncTime();
 void reconnectNetworkWithCustomIP();
 void saveCredentialsSTATION();
 
+
 //--test/debug functions (meant to be removed on production)--//
-void TEST_eeprom_state();
+void TEST_schedules_variable_data();
 //-----------------------------//
 
 bool defaultLEDState = HIGH;
@@ -51,7 +52,7 @@ const uint8_t LED_PIN = D1;
 // char *password_STATION = "dr0wss@p";
 String ssid_STATION = "1011001";
 String password_STATION = "dr0wss@p";
-String ssid_AP = "Smart_Bell";
+String ssid_AP = "Smart_Switch";
 String password_AP = "dr0wss@p";
 bool isModeStation = true;
 const int timeOffsetHour = 5;
@@ -110,11 +111,11 @@ bool lightStatus()
 
     if (start_time <= current_time && current_time < start_time + duration)
     {
-      Serial.printf("bulb D0 : %d\n",!defaultLEDState);
+      Serial.printf("bulb D0 : ON (%d)\n",!defaultLEDState);
       return !defaultLEDState;
     }
   }
-  Serial.printf("bulb D0 : %d",defaultLEDState);
+  Serial.printf("bulb D0 : OFF (%d)",defaultLEDState);
   return defaultLEDState;
 }
 
@@ -125,26 +126,11 @@ void establishNetwork()
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
 
-  ssid_STATION = "1011001";
-  password_STATION = "dr0wss@p";
-
-  WiFi.disconnect();
-
-  IPAddress apIP(192, 168, 1, custom_ip); // New AP IP address
-  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-
-  WiFi.mode(WIFI_AP_STA);
-  if(WiFi.softAP(ssid_AP,password_AP)){
-    Serial.print("Soft ap successful \n IP : ");
-    Serial.println(WiFi.softAPIP());
-    // dnsServer.start(53, "*", WiFi.softAPIP());
-  }else
-  {
-    Serial.println("Soft AP unsuccessful!");
-  }
-  //starts hotspot
-  WiFi.begin(ssid_STATION,password_STATION);// start connection
   
+  WiFi.mode(WIFI_AP_STA);
+  //starts hotspot
+  
+  WiFi.begin(ssid_STATION,password_STATION);// start connection
   //WAIT 10 SEC FOR CONNECTION
   for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
     delay(500);
@@ -155,12 +141,20 @@ void establishNetwork()
   {
     Serial.print("Station Connection Successful!\nIP : ");
     Serial.println(WiFi.localIP());
-    // reconnectNetworkWithCustomIP();
+    reconnectNetworkWithCustomIP();
     saveCredentialsSTATION();
     Serial.println(WiFi.localIP());
   }else {
     Serial.println("Station Connection Unsuccessful!to\nSSID : "+ssid_STATION + "\nPWD : "+password_STATION);
   }
+  if(WiFi.softAP(ssid_AP,password_AP)){
+    Serial.print("Soft ap successful \n IP : ");
+    Serial.println(WiFi.softAPIP());
+  }else
+  {
+    Serial.println("Soft AP unsuccessful!");
+  }
+
 }
 void saveCredentialsSTATION(){
     ssid_STATION = WiFi.SSID();
@@ -171,11 +165,18 @@ void saveCredentialsSTATION(){
 
 void reconnectNetworkWithCustomIP(){
 
+  IPAddress dnsServer1(8, 8, 8, 8);      // Google DNS server
+  IPAddress dnsServer2(8, 8, 4, 4);      // Google DNS server
    if (WiFi.status() == WL_CONNECTED)
       {
         IPAddress IP = WiFi.gatewayIP();
         IP[3] = custom_ip;
-        WiFi.config(IP,WiFi.gatewayIP(),WiFi.subnetMask());
+        WiFi.config(  IP,
+                      WiFi.gatewayIP(),
+                      WiFi.subnetMask(),
+                      dnsServer1,
+                      dnsServer2
+                    );
       }
 }
 
@@ -238,14 +239,10 @@ void startWebServer_EXPIRED()
 
 void handleRoot_GET()
 {
+  char *format = "";
+  int start_time_hour;
   Serial.println("handling / get request");
-
-
-
-  // String html = "<html><head><meta charset='UTF-8'><title>Light Scheduler</title></head><body>";
-  // html += "<h1>Light Scheduler ";
-  // html += "<form style='display:inline-block' method='GET' action='/settings'><button type='submit'>⚙️ Settings</button></form></h1>";
-  // html += "<table><tr><th>Start Time</th><th>Duration</th></tr>";
+  TEST_schedules_variable_data();
 
   String html = R"(
     <html>
@@ -266,9 +263,6 @@ void handleRoot_GET()
           </tr>
   )";
 
-  char *format = "";
-  int start_time_hour;
-
   for (int i = 0; i < num_schedules; i++)
   {
     if (schedules[i].isDeleted)
@@ -279,19 +273,10 @@ void handleRoot_GET()
     else
       start_time_hour = schedules[i].start_time_hour;
 
-    // html += "<tr><td>" + String(start_time_hour) + ":" + String(schedules[i].start_time_min) + " " + format + "</td>";
-    // html += "<td>" + String(schedules[i].duration) + " min</td>";
-    // // html += "<td><button id='btn";
-    // html += "<td><form method='POST' action='/delete-schedule'><input type='hidden' name='index' value=";
-    // html += i;
-    // html += "><button type='submit'>Delete</button></form></td></tr>";
     html += R"(
       <tr>
         <td>)"+ String(start_time_hour) +":" + String(schedules[i].start_time_min) + " " + format + R"(</td>
         <td>)" + String(schedules[i].duration) + R"( min</td>
-        // <td>
-        //   <button id='btn'>
-        // </td>
         <td>
           <form method='POST' action='/delete-schedule'>
             <input type='hidden' name='index' value=")" + i + R"(">
@@ -315,18 +300,13 @@ void handleRoot_GET()
       </body>
     </html>
   )";
-  // html += "</table><br><br><form method='POST'>";
-  // html += "Start Time: <input type='time' name='start_time'><br><br>";
-  // html += "Duration : &nbsp&nbsp<input type='text' name='duration' placeholder='minutes'><br><br>";
-  // html += "<input type='submit' value='Save'>";
-  // html += "</form><form method='POST' action='/delete-all-schedule'><button type='submit'>Delete All Schedules</button></form></body></html>";
-
   server.send(200, "text/html", html);
 }
 
 void handleRoot_POST()
 {
   Serial.println("handling / post request");
+  TEST_schedules_variable_data();
   String start_time_hour = "";
   String start_time_min = "";
   String duration = "";
@@ -355,7 +335,7 @@ void handleRoot_POST()
 
   num_schedules++;
   saveSchedulesToEEPROM();
-  TEST_eeprom_state();
+  TEST_schedules_variable_data();
   server.sendHeader("Location", "/");
   server.send(303);
 }
@@ -516,7 +496,8 @@ void loadSchedulesFromEEPROM()
 void deleteSchedule(int index)
 {
   schedules[index].isDeleted = true;
-  TEST_eeprom_state();
+  saveSchedulesToEEPROM();
+  TEST_schedules_variable_data();
   digitalWrite(LED_PIN, lightStatus());
 }
 
@@ -530,6 +511,7 @@ void deleteAllSchedules()
     schedules[i].isDeleted = true;
 
   digitalWrite(LED_PIN, defaultLEDState);
+  saveSchedulesToEEPROM();
   EEPROM.end();
 }
 
@@ -619,34 +601,34 @@ bool subscriptionStatus()
       isActiveLocal == true)
   {
     Serial.println("Subscription Active");
-    return true;
+    // return true;
   }
   else
   {
     Serial.println("Subscription Expired");
-    return false;
+    // return false;
   }
+  http.end();
+  // http.begin(wifiClient, "172.217.164.110");
+  http.begin(wifiClient, "http://www.google.com/");
+  httpResponseCode = http.GET();
+  // Check for successful POST request
+  if (httpResponseCode > 0)
+  {
+    Serial.printf("Google Working, response code: %d\n", httpResponseCode);
+  }else {
+    Serial.println("no google");
+  }return true;
 }
 
 // test function-----------------//
 //------------------------------//
-void TEST_eeprom_state()
+void TEST_schedules_variable_data()
 {
-  Schedule test_schedules[MAX_SCHEDULES];
-  EEPROM.begin(512);
-  int address = 0;
-  EEPROM.get(address, num_schedules);
-  address += sizeof(num_schedules);
-
-  Serial.println("-------TESTING EEPROM DATA------------");
+  Serial.println("-------TESTING SCHEDULES DATA------------");
   Serial.printf("Index | hour | tMinutes | Duration | Deleted?\n");
-  for (int i = 0; i < MAX_SCHEDULES; i++)
-  {
-    // EEPROM.get(address, test_schedules[i]);
-    // address += sizeof(test_schedules[i]);
-    Serial.printf("%d    |   %d  |   %d   |   %d   | %d\n", i, schedules[i].start_time_hour, schedules[i].start_time_min, schedules[i].duration, schedules[i].isDeleted);
-    // Serial.printf("%d\t|\t%d\t|\t%d\t|\t%s\n",i,test_schedules[i].start_time_hour,test_schedules[i].start_time_min,test_schedules[i].duration,test_schedules[i].isDeleted ? "true" : "false");
+  for (int i = 0; i < MAX_SCHEDULES; i++)  {
+    Serial.printf("%d     |  %d  |   %d     |   %d   | %d\n", i, schedules[i].start_time_hour, schedules[i].start_time_min, schedules[i].duration, schedules[i].isDeleted);
   }
   Serial.println("-----------------------------------------");
-  EEPROM.end();
 }
