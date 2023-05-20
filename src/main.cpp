@@ -30,6 +30,8 @@ void handleDeleteSchedule_POST();
 void handleDeleteAllSchedule_POST();
 void handleSettings_GET();
 void handleSettings_POST();
+void handleToogleSwitchState_POST();
+void handleSyncTime_POST();
 void deleteSchedule(int);
 void deleteAllSchedules();
 void establishNetwork();
@@ -41,15 +43,12 @@ bool syncTime();
 void reconnectNetworkWithCustomIP();
 void saveCredentialsSTATION();
 
-
 //--test/debug functions (meant to be removed on production)--//
 void TEST_schedules_variable_data();
 //-----------------------------//
 
-bool defaultLEDState = HIGH;
+bool defaultSwitchState = HIGH;
 const uint8_t LED_PIN = D1;
-// char *ssid_STATION = "1011001";
-// char *password_STATION = "dr0wss@p";
 String ssid_STATION = "1011001";
 String password_STATION = "dr0wss@p";
 String ssid_AP = "Smart_Switch";
@@ -114,12 +113,12 @@ bool lightStatus()
 
     if (start_time <= current_time && current_time < start_time + duration)
     {
-      Serial.printf("bulb D0 : ON (%d)\n",!defaultLEDState);
-      return !defaultLEDState;
+      Serial.printf("bulb D0 : ON (%d)\n",!defaultSwitchState);
+      return !defaultSwitchState;
     }
   }
-  Serial.printf("bulb D0 : OFF (%d)",defaultLEDState);
-  return defaultLEDState;
+  Serial.printf("bulb D0 : OFF (%d)",defaultSwitchState);
+  return defaultSwitchState;
 }
 
 void establishNetwork()
@@ -226,6 +225,8 @@ void startWebServer_ACTIVE()
   server.on("/delete-all-schedule", HTTP_POST, handleDeleteAllSchedule_POST);
   server.on("/settings", HTTP_GET, handleSettings_GET);
   server.on("/settings", HTTP_POST, handleSettings_POST);
+  server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
+  server.on("/sync-time",HTTP_POST, handleSyncTime_POST);
   server.begin();
   Serial.println("light Scheduling HTTP Server started");
 }
@@ -236,6 +237,7 @@ void startWebServer_EXPIRED()
             { server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><h1>Subscription Expired!! </h1><form method='GET' action='/settings'><button type='submit'>⚙️ Settings</button></form></body></html>"); });
   server.on("/settings", HTTP_GET, handleSettings_GET);
   server.on("/settings", HTTP_POST, handleSettings_POST);
+  server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
   server.begin();
   Serial.println("Subscription Expired Server");
 }
@@ -243,22 +245,27 @@ void startWebServer_EXPIRED()
 void handleRoot_GET()
 {
   char *format = "";
-  int start_time_hour;
+  uint8_t start_time_hour;
+  uint16_t expiry_date_year = preferences.getUShort("expiry_date_year");
+  uint8_t expiry_date_month = preferences.getUShort("expiry_date_month");
+  uint8_t expiry_date_day = preferences.getUShort("expiry_date_day");
+
   Serial.println("handling / get request");
   TEST_schedules_variable_data();
 
   String html = R"(
     <html>
       <head>
-        <meta charset='UTF-8'><title>Light Scheduler</title>
+        <meta charset='UTF-8'><title>Switch Scheduler</title>
       </head>
       <body>
-        <h1>
-          Light Scheduler 
-          <form style='display:inline-block' method='GET' action='/settings'>
+        <h1 style="margin:0px">
+          Switch Scheduler
+          <form style='display:inline' method='GET' action='/settings'>
             <button type='submit'>⚙️ Settings</button>
           </form>
         </h1>
+        <i>( Expires on: &nbsp; )" +String(expiry_date_year) + R"( / )" + String(expiry_date_month) + R"( / )" + String(expiry_date_day) + R"( )</i><br><br><br>
         <table>
           <tr>
             <th>Start Time</th>
@@ -359,6 +366,7 @@ void handleDeleteAllSchedule_POST()
 
 void handleSettings_GET()
 {
+  String sync_result = syncTime() ? "Successful" : "Unsuccessful";
   String wifi_state = WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected";
   String html = R"(
   <html>
@@ -369,7 +377,8 @@ void handleSettings_GET()
   <body>
     <h1>Configuration Page</h1>
     <form method='POST' action="/settings">
-        <h3>Network : )"+ wifi_state+ R"(</h3>
+        <h4 style="display:inline">Time Syncronization :</h4> )"+ sync_result+ R"(<br>
+        <h4 style="display:inline">Network Status :</h4> )"+ wifi_state+ R"(<br><br>
         <h3>IP Address</h3>192.168.1. 
         <input type="number" name="ip" min="10" max="250" placeholder=")" +
                 String(custom_ip) + R"(" style="width:4em"/><br/>
@@ -377,6 +386,12 @@ void handleSettings_GET()
         SSID  : <input name="ssid" style="margin-left: 25px"/><br/>
         Password : <input name="password"/><br/><br/><br>
         <button type="submit">Save Changes</button>
+    </form>
+    <form method='POST' action='/sync-time'>
+      <button type='submit'>Sync Time</button>
+    </form>
+    <form method='POST' action='/toogle-switch-state'>
+      <button type='submit'>Toggle Switch State</button>
     </form>
     <script>
       function changeLabel(value) {
@@ -457,6 +472,18 @@ void handleSettings_POST()
   establishNetwork();
 }
 
+void handleToogleSwitchState_POST(){
+  defaultSwitchState = !defaultSwitchState;
+  server.sendHeader("Location", "/settings");
+  server.send(303);
+}
+
+void handleSyncTime_POST(){
+
+  server.sendHeader("Location", "/settings");
+  server.send(303);
+}
+
 void saveSchedulesToEEPROM()
 {
   EEPROM.begin(512);
@@ -512,7 +539,7 @@ void deleteAllSchedules()
   for (int i = 0; i < MAX_SCHEDULES; i++)
     schedules[i].isDeleted = true;
 
-  digitalWrite(LED_PIN, defaultLEDState);
+  digitalWrite(LED_PIN, defaultSwitchState);
   saveSchedulesToEEPROM();
   EEPROM.end();
 }
@@ -565,6 +592,9 @@ bool subscriptionStatus()
     expiry_date_month = response["expiry_date"]["month"]; // 4
     expiry_date_day = response["expiry_date"]["day"];     // 23
 
+    preferences.putUShort("expiry_date_year",expiry_date_year);
+    preferences.putUShort("expiry_date_month",expiry_date_month);
+    preferences.putUShort("expiry_date_day",expiry_date_day);
     //-----format of response---------//
     // {
     // "status": true,
@@ -590,6 +620,8 @@ bool subscriptionStatus()
   Serial.printf("Expiry date month: %d\n", expiry_date_month);
   Serial.printf("Expiry date day: %d\n", expiry_date_day);
 
+
+
   time_t now = time(nullptr);
   struct tm *timeinfo = localtime(&now);
 
@@ -603,24 +635,13 @@ bool subscriptionStatus()
       isActiveLocal == true)
   {
     Serial.println("Subscription Active");
-    // return true;
+    return true;
   }
   else
   {
     Serial.println("Subscription Expired");
-    // return false;
+    return false;
   }
-  http.end();
-  // http.begin(wifiClient, "172.217.164.110");
-  http.begin(wifiClient, "http://www.google.com/");
-  httpResponseCode = http.GET();
-  // Check for successful POST request
-  if (httpResponseCode > 0)
-  {
-    Serial.printf("Google Working, response code: %d\n", httpResponseCode);
-  }else {
-    Serial.println("no google");
-  }return true;
 }
 
 // test function-----------------//
