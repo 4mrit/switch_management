@@ -20,6 +20,7 @@ uint8_t custom_ip = 222;
 //-----------------------------//
 
 bool lightStatus();
+void startWebServer();
 void startWebServer_ACTIVE();
 void startWebServer_EXPIRED();
 void saveSchedulesToEEPROM();
@@ -42,6 +43,7 @@ bool subscriptionStatus();
 bool syncTime();
 void reconnectNetworkWithCustomIP();
 void saveCredentialsSTATION();
+bool isSavedSubscriptionActive();
 
 //--test/debug functions (meant to be removed on production)--//
 void TEST_schedules_variable_data();
@@ -79,23 +81,25 @@ void setup()
   pinMode(LED_PIN, OUTPUT);
   syncTime();
   loadSchedulesFromEEPROM();
-  if (subscriptionStatus() == true)
-  {
-    startWebServer_ACTIVE();
-  }
-  else
-  {
-    startWebServer_EXPIRED();
-  }
+  startWebServer();
 }
 
 void loop()
 {
   digitalWrite(LED_PIN, lightStatus());
   server.handleClient();
-  if(WiFi.status() != WL_CONNECTED)  {
+  unsigned long syncInterval = 24 * 60 * 60 * 1000;  // 24 hours in milliseconds
+  static unsigned long lastSyncTime = 0;
+  if (millis() - lastSyncTime >= syncInterval) {
+    syncTime();
+    lastSyncTime = millis();
+  }
+  if(WiFi.status() != WL_CONNECTED) {
     //retry connection when connection is lost
     WiFi.begin(ssid_STATION,password_STATION);
+  }
+  if(isSavedSubscriptionActive() != true){
+    startWebServer();
   }
   delay(1000);
 }
@@ -215,6 +219,14 @@ uint16_t getCurrentTimeInMinutes()
                 timeinfo->tm_sec);
 
   return timeinfo->tm_hour * 60 + timeinfo->tm_min;
+}
+void startWebServer(){
+  server.close();
+  if (subscriptionStatus() == true){
+    startWebServer_ACTIVE();
+  }else {
+    startWebServer_EXPIRED();
+  }
 }
 
 void startWebServer_ACTIVE()
@@ -643,7 +655,18 @@ bool subscriptionStatus()
     return false;
   }
 }
+bool isSavedSubscriptionActive(){
 
+  time_t now = time(nullptr);
+  struct tm *timeinfo = localtime(&now);
+  uint16_t expiry_date_year = preferences.getUShort("expiry_date_year",0);
+  uint8_t expiry_date_month = preferences.getUShort("expiry_date_month",0);
+  uint8_t expiry_date_day = preferences.getUShort("expiry_date_day",0);
+  bool isActive = (expiry_date_year > timeinfo->tm_year ||
+                        (expiry_date_year == timeinfo->tm_year && expiry_date_month > timeinfo->tm_mon) ||
+                        (expiry_date_year == timeinfo->tm_year && expiry_date_month == timeinfo->tm_mon && expiry_date_day > timeinfo->tm_mday));
+  return isActive;
+}
 // test function-----------------//
 //------------------------------//
 void TEST_schedules_variable_data()
