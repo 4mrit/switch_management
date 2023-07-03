@@ -11,6 +11,7 @@
 #include <ESP8266HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <chrono>
 
 WiFiManager wifi;
 Preferences preferences;
@@ -33,9 +34,10 @@ void handleSettings_GET();
 void handleSettings_POST();
 void handleToogleSwitchState_POST();
 void handleSyncTime_POST();
+void handleRecheckSubscription_POST();
 void deleteSchedule(int);
 void deleteAllSchedules();
-void establishNetwork();
+void establishNetwork(bool);
 void setCustomIPandSaveNetwork();
 uint16_t getCurrentTimeInMinutes();
 int getExpiryTime();
@@ -44,20 +46,24 @@ bool syncTime();
 void reconnectNetworkWithCustomIP();
 void saveCredentialsSTATION();
 bool isSavedSubscriptionActive();
-
+String macAddressinDecimal();
 //--test/debug functions (meant to be removed on production)--//
 void TEST_schedules_variable_data();
 //-----------------------------//
 
-bool defaultSwitchState = HIGH;
-const uint8_t LED_PIN = D1;
+bool defaultSwitchState;
+const uint8_t LED_PIN = D0;
 String ssid_STATION = "1011001";
 String password_STATION = "dr0wss@p";
 String ssid_AP = "Smart_Switch";
 String password_AP = "dr0wss@p";
 bool isModeStation = true;
+bool isActive = false;
 const int timeOffsetHour = 5;
 const int timeOffsetMin = 45;
+// const String serverLocation = "http://202.79.43.18:1080/";
+// const String serverLocation = "http://192.168.43.111/modular_switch_control_system/";
+const String serverLocation = "http://192.168.1.111/modular_switch_control_system/";
 
 struct Schedule
 {
@@ -77,28 +83,39 @@ void setup()
 {
   Serial.begin(9600);
   preferences.begin("my-app", false);
-  establishNetwork();
+  defaultSwitchState = preferences.getBool("defaultSwitchState", HIGH);
+  establishNetwork(0);
   pinMode(LED_PIN, OUTPUT);
   syncTime();
   loadSchedulesFromEEPROM();
   startWebServer();
 }
 
+/// @brief 
 void loop()
 {
-  digitalWrite(LED_PIN, lightStatus());
+  if(isSavedSubscriptionActive()){
+    digitalWrite(LED_PIN, lightStatus());
+  }
   server.handleClient();
   unsigned long syncInterval = 24 * 60 * 60 * 1000;  // 24 hours in milliseconds
   static unsigned long lastSyncTime = 0;
+  unsigned long wifiConnectionTimeout = 20000;
+  static unsigned long lastConnectionTime = 0;
   if (millis() - lastSyncTime >= syncInterval) {
     syncTime();
     lastSyncTime = millis();
   }
-  if(WiFi.status() != WL_CONNECTED) {
+  if(WiFi.status() != WL_CONNECTED && millis()-lastConnectionTime >= wifiConnectionTimeout ) {
     //retry connection when connection is lost
-    WiFi.begin(ssid_STATION,password_STATION);
+    lastConnectionTime = millis();
+    Serial.println("wifi disconnected attempting reconnection");
+    establishNetwork(true);
   }
-  if(isSavedSubscriptionActive() != true){
+  if(isSavedSubscriptionActive() != isActive){
+
+    Serial.println("changes detected starting server");
+    Serial.printf("saved : %d  , isActive : %d",isSavedSubscriptionActive(),isActive );
     startWebServer();
   }
   delay(1000);
@@ -125,21 +142,24 @@ bool lightStatus()
   return defaultSwitchState;
 }
 
-void establishNetwork()
+void establishNetwork(bool reconnect_WiFi)
 {
   ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
-  password_STATION = preferences.getString("password_STATION",password_STATION);
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
 
   WiFi.mode(WIFI_AP_STA);
   //starts hotspot
+
+  
   WiFi.config(IPAddress(),IPAddress(),IPAddress());
   WiFi.begin(ssid_STATION,password_STATION);// start connection
   //WAIT 10 SEC FOR CONNECTION
-  for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
-    delay(500);
-    Serial.println("Connecting to wifi ..");
+  if(reconnect_WiFi == false){
+    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+      delay(500);
+      Serial.println("Connecting to wifi ..");
+    }
   }
 
   if(WiFi.status() == WL_CONNECTED)
@@ -152,12 +172,14 @@ void establishNetwork()
   }else {
     Serial.println("Station Connection Unsuccessful!to\nSSID : "+ssid_STATION + "\nPWD : "+password_STATION);
   }
-  if(WiFi.softAP(ssid_AP,password_AP)){
-    Serial.print("Soft ap successful \n IP : ");
-    Serial.println(WiFi.softAPIP());
-  }else
-  {
-    Serial.println("Soft AP unsuccessful!");
+  if(reconnect_WiFi == false){
+    if(WiFi.softAP(ssid_AP,password_AP )){
+      Serial.print("Soft ap successful \n IP : ");
+      Serial.println(WiFi.softAPIP());
+    }else
+    {
+      Serial.println("Soft AP unsuccessful!");
+    }
   }
 
 }
@@ -188,6 +210,12 @@ void reconnectNetworkWithCustomIP(){
 
 bool syncTime()
 {
+  if (!WiFi.isConnected())
+  {
+    Serial.printf("No network connection available. Time synchronization failed. \n");
+    return false;
+  }
+
   configTime(timeOffsetHour * 3600 + timeOffsetMin * 60, 0,
              "pool.ntp.org",
              "time.google.com"
@@ -221,10 +249,12 @@ uint16_t getCurrentTimeInMinutes()
   return timeinfo->tm_hour * 60 + timeinfo->tm_min;
 }
 void startWebServer(){
-  server.close();
-  if (subscriptionStatus() == true){
+  bool expiry_date_set = preferences.getBool("expiry_date_set");
+  if (expiry_date_set && isSavedSubscriptionActive() || subscriptionStatus() == true){
+    isActive = true;
     startWebServer_ACTIVE();
   }else {
+    isActive = false;
     startWebServer_EXPIRED();
   }
 }
@@ -246,10 +276,25 @@ void startWebServer_ACTIVE()
 void startWebServer_EXPIRED()
 {
   server.on("/", HTTP_GET, []()
-            { server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><h1>Subscription Expired!! </h1><form method='GET' action='/settings'><button type='submit'>⚙️ Settings</button></form></body></html>"); });
+            { server.send(200, "text/html", R"(
+              <html>
+              <head><meta charset='UTF-8'></head>
+              <body>
+                <h1>Subscription Expired!! </h1>
+                <form method='GET' action='/settings'>
+                  <button type='submit'>⚙️ Settings</button>
+                </form>
+                <form method='POST' action='/recheck-subscription'>
+                  <button type='submit'>Check Subscription</button>
+                </form>
+              </body>
+              </html>
+            )"); });
+              
   server.on("/settings", HTTP_GET, handleSettings_GET);
   server.on("/settings", HTTP_POST, handleSettings_POST);
   server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
+  server.on("/recheck-subscription",HTTP_POST, handleRecheckSubscription_POST);
   server.begin();
   Serial.println("Subscription Expired Server");
 }
@@ -378,32 +423,48 @@ void handleDeleteAllSchedule_POST()
 
 void handleSettings_GET()
 {
-  String sync_result = syncTime() ? "Successful" : "Unsuccessful";
-  String wifi_state = WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected";
+  String macAddress = macAddressinDecimal();
+
+  String sync_result = syncTime() ? 
+              "<span class='green'>Successful</span>" :
+              "<span class='red'>Unsuccessful</span>";
+
+  String wifi_state = WiFi.status() == WL_CONNECTED ? 
+              "<span class='green'>Connected</span>" : 
+              "<span class='red'>Disconnected</span>";
+
   String html = R"(
   <html>
     <head>
       <meta charset='UTF-8'>
       <title>⚙️ Settings</title>
+      <style>
+        form,h4 {
+          display:inline;
+        }
+        .red{color:red;}
+        .green{color:green;}
+      </style>
     </head>
   <body>
     <h1>Configuration Page</h1>
-    <form method='POST' action="/settings">
-        <h4 style="display:inline">Time Syncronization :</h4> )"+ sync_result+ R"(<br>
-        <h4 style="display:inline">Network Status :</h4> )"+ wifi_state+ R"(<br><br>
-        <h3>IP Address</h3>192.168.1. 
-        <input type="number" name="ip" min="10" max="250" placeholder=")" +
-                String(custom_ip) + R"(" style="width:4em"/><br/>
+    <form  method='POST' action="/settings">
+        <h4> Time Syncronization :</h4> )"+ sync_result+ R"(<br><br>
+        <h4> Network Status :</h4> )"+ wifi_state+ R"(<br><br>
+        <h4> Serial No :</h4> )"+ macAddress + R"(<br><br>
+        <h4> IP Address :</h4>192.168.1. 
+        <input disabled type="number" name="ip" min="10" max="250" value=")" +
+                String(custom_ip) + R"(" style="width:4em"/><br/><br/><br>
         <h3 id="cred_label" >Network Credentials (WiFi)</h3>
-        SSID  : <input name="ssid" style="margin-left: 25px"/><br/>
+        SSID  : <input name="ssid" style="margin-left: 25px"/><br/><br>
         Password : <input name="password"/><br/><br/><br>
         <button type="submit">Save Changes</button>
     </form>
     <form method='POST' action='/sync-time'>
-      <button type='submit'>Sync Time</button>
+      <button name="sync-time" type='submit'>Sync Time</button>
     </form>
     <form method='POST' action='/toogle-switch-state'>
-      <button type='submit'>Toggle Switch State</button>
+      <button name="toogle-switch-state" type='submit'>Toggle Switch State</button>
     </form>
     <script>
       function changeLabel(value) {
@@ -481,19 +542,35 @@ void handleSettings_POST()
 
   // server.stop();
   // delay(10);
-  establishNetwork();
+  establishNetwork(0);
 }
 
 void handleToogleSwitchState_POST(){
+  Serial.println("Toggling default switch state");
   defaultSwitchState = !defaultSwitchState;
+  preferences.putBool("defaultSwitchState",defaultSwitchState);
+  Serial.printf("default state = %s",defaultSwitchState?"HIGH":"LOW");
   server.sendHeader("Location", "/settings");
   server.send(303);
 }
 
 void handleSyncTime_POST(){
-
+  Serial.println("Syncing Time With NTP Server");
+  syncTime();
   server.sendHeader("Location", "/settings");
   server.send(303);
+}
+void handleRecheckSubscription_POST(){
+  if(subscriptionStatus() == true){
+    Serial.println("subscription activated on recheck");
+    server.send(200,"text/html","Subscription Activated! Opening Appopriate Server");
+    ESP.restart();
+    // startWebServer();
+  }else {
+    Serial.println("subscription expired on recheck");
+    server.sendHeader("Location", "/");
+    server.send(303);
+  }
 }
 
 void saveSchedulesToEEPROM()
@@ -564,21 +641,29 @@ bool subscriptionStatus()
   bool expired;
   StaticJsonDocument<256> response;
   StaticJsonDocument<48> request;
-  const char *mac_address;
+  const char *mac_address = "";
   int expiry_date_year;
   int expiry_date_month;
   int expiry_date_day;
   bool isExpiredLocal = true;
   String postData;
+  time_t now = time(nullptr);
+  struct tm* currentDate = localtime(&now);
+  tm expiry_date = {};
 
-  http.begin(wifiClient, "http://202.79.43.18:1080/get_expiry_date.php");
+  // Serial.printf("\nFUNCTION-IS_SAVED_SUBSCRIPTION_ACTIVE\nExpiration Year : %d\nExpiration Month : %d\nExpiration Day: %d\n",expiry_date_year,expiry_date_month,expiry_date_day);
+  // Serial.printf("------------\n Year : %d\n Month : %d\n Day: %d",timeinfo->tm_year+1900,timeinfo->tm_mon+ 1,timeinfo->tm_mday);
+
+    
+
+  http.begin(wifiClient, serverLocation + "get_expiry_date.php");
   http.addHeader("Content-Type", "application/json");
 
   //----Format_of_request-------------//
   //    {
   //      "client_mac_address": "40:F5:20:23:01:2E";
   //    }
-  //----------------------------------//
+  //----------------------------------//2
   request["client_mac_address"] = WiFi.macAddress();
   serializeJson(request, postData);
 
@@ -634,38 +719,65 @@ bool subscriptionStatus()
 
 
 
-  time_t now = time(nullptr);
-  struct tm *timeinfo = localtime(&now);
+  // time_t now = time(nullptr);
+  // struct tm *timeinfo = localtime(&now);
 
-  bool isActiveLocal = (expiry_date_year > timeinfo->tm_year ||
-                        (expiry_date_year == timeinfo->tm_year && expiry_date_month > timeinfo->tm_mon) ||
-                        (expiry_date_year == timeinfo->tm_year && expiry_date_month == timeinfo->tm_mon && expiry_date_day > timeinfo->tm_mday));
+
+  expiry_date.tm_year = preferences.getUShort("expiry_date_year",0) - 1900; // Set the year
+  expiry_date.tm_mon = preferences.getUShort("expiry_date_month",0) -1;   // Set the month (0-11)
+  expiry_date.tm_mday = preferences.getUShort("expiry_date_day",0) +1; // Set the day
+    
+  // difftime(time_1,time_2) => time_1 - time_2 (in seconds)
+
+  // bool isActiveLocal = (expiry_date_year > timeinfo->tm_year ||
+  //                       (expiry_date_year == timeinfo->tm_year && expiry_date_month > timeinfo->tm_mon) ||
+  //                       (expiry_date_year == timeinfo->tm_year && expiry_date_month == timeinfo->tm_mon && expiry_date_day > timeinfo->tm_mday));
+
+  bool isActiveLocal = difftime(mktime(&expiry_date),mktime(currentDate)) >=0;
 
   if (status == true &&
       expired == false &&
-      WiFi.macAddress().equals(mac_address) &&
+      macAddressinDecimal().equals(mac_address) &&
       isActiveLocal == true)
   {
     Serial.println("Subscription Active");
+    preferences.putBool("expiry_date_set",HIGH);
+    isActive = true;
     return true;
   }
   else
   {
+    preferences.putBool("expiry_date_set",LOW);
+    preferences.putUShort("expiry_date_year",0);
+    preferences.putUShort("expiry_date_month",0);
+    preferences.putUShort("expiry_date_day",0);
     Serial.println("Subscription Expired");
+    isActive = false;
     return false;
   }
 }
 bool isSavedSubscriptionActive(){
 
   time_t now = time(nullptr);
-  struct tm *timeinfo = localtime(&now);
+  struct tm* currentDate = localtime(&now);
+
   uint16_t expiry_date_year = preferences.getUShort("expiry_date_year",0);
   uint8_t expiry_date_month = preferences.getUShort("expiry_date_month",0);
   uint8_t expiry_date_day = preferences.getUShort("expiry_date_day",0);
-  bool isActive = (expiry_date_year > timeinfo->tm_year ||
-                        (expiry_date_year == timeinfo->tm_year && expiry_date_month > timeinfo->tm_mon) ||
-                        (expiry_date_year == timeinfo->tm_year && expiry_date_month == timeinfo->tm_mon && expiry_date_day > timeinfo->tm_mday));
-  return isActive;
+
+  // Serial.printf("\nFUNCTION-IS_SAVED_SUBSCRIPTION_ACTIVE\nExpiration Year : %d\nExpiration Month : %d\nExpiration Day: %d\n",expiry_date_year,expiry_date_month,expiry_date_day);
+  // Serial.printf("------------\n Year : %d\n Month : %d\n Day: %d",timeinfo->tm_year+1900,timeinfo->tm_mon+ 1,timeinfo->tm_mday);
+
+  tm expiry_date = {};
+  expiry_date.tm_year = preferences.getUShort("expiry_date_year",0) - 1900; // Set the year
+  expiry_date.tm_mon = preferences.getUShort("expiry_date_month",0) -1;   // Set the month (0-11)
+  expiry_date.tm_mday = preferences.getUShort("expiry_date_day",0) +1; // Set the day
+    
+    // difftime(time_1,time_2) => time_1 - time_2 (in seconds)
+    return difftime(mktime(&expiry_date),mktime(currentDate)) >=0;
+    
+    // bool response = difftime(mktime(&expiry_date),mktime(currentDate)) >=0;
+    // Serial.printf("Comparisionn responsne : %d\n", response);
 }
 // test function-----------------//
 //------------------------------//
@@ -677,4 +789,18 @@ void TEST_schedules_variable_data()
     Serial.printf("%d     |  %d  |   %d     |   %d   | %d\n", i, schedules[i].start_time_hour, schedules[i].start_time_min, schedules[i].duration, schedules[i].isDeleted);
   }
   Serial.println("-----------------------------------------");
+}
+
+String macAddressinDecimal() {
+  String decimalMac = "";
+
+  // Remove colons from MAC address
+  String sanitizedMac = WiFi.macAddress();
+  sanitizedMac.replace(":", "");
+
+  // Convert the entire MAC address from hexadecimal to decimal
+  unsigned long long decimalValue = strtoull(sanitizedMac.c_str(), NULL, 16);
+  decimalMac = String(decimalValue);
+
+  return decimalMac;
 }
