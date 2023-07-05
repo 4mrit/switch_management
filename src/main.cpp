@@ -16,8 +16,16 @@
 WiFiManager wifi;
 Preferences preferences;
 
+//---------Urgent Ring Time-----//
+uint16_t UrgentOnTime = 10000 ; //10000 ms -> 10sec
+//------------------------------//
+
 //---------Static IP-----------//
 uint8_t custom_ip = 222;
+
+//---------Switch Pin-----------//
+const uint8_t SWITCH_PIN = D5;
+//-----------------------------//
 //-----------------------------//
 
 bool lightStatus();
@@ -35,11 +43,12 @@ void handleSettings_POST();
 void handleToogleSwitchState_POST();
 void handleSyncTime_POST();
 void handleRecheckSubscription_POST();
+void handleUrgentOn_POST();
 void deleteSchedule(int);
 void deleteAllSchedules();
 void establishNetwork(bool);
 void setCustomIPandSaveNetwork();
-uint16_t getCurrentTimeInMinutes();
+uint16_t getCurrentTimeInSeconds();
 int getExpiryTime();
 bool subscriptionStatus();
 bool syncTime();
@@ -52,7 +61,12 @@ void TEST_schedules_variable_data();
 //-----------------------------//
 
 bool defaultSwitchState;
-const uint8_t LED_PIN = D0;
+const char* pinNames[] = {
+    "D3", "D10", "D4", "D9", "D2", "D1", "-", "-", "-", "D11", "D12", "-", "D6", "D7", "D5", "D8", "D0"
+};
+
+
+
 String ssid_STATION = "1011001";
 String password_STATION = "dr0wss@p";
 String ssid_AP = "Smart_Switch";
@@ -69,7 +83,8 @@ struct Schedule
 {
   int start_time_hour;
   int start_time_min;
-  int duration;
+  int duration_minutes;
+  int duration_seconds;
   bool isDeleted = true;
 };
 
@@ -85,60 +100,69 @@ void setup()
   preferences.begin("my-app", false);
   defaultSwitchState = preferences.getBool("defaultSwitchState", HIGH);
   establishNetwork(0);
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(SWITCH_PIN, OUTPUT);
   syncTime();
   loadSchedulesFromEEPROM();
   startWebServer();
 }
 
-/// @brief 
 void loop()
 {
   if(isSavedSubscriptionActive()){
-    digitalWrite(LED_PIN, lightStatus());
+    digitalWrite(SWITCH_PIN, lightStatus());
   }
+
+
   server.handleClient();
+
+  //------------------------time sync(1day)----------------------//
   unsigned long syncInterval = 24 * 60 * 60 * 1000;  // 24 hours in milliseconds
   static unsigned long lastSyncTime = 0;
-  unsigned long wifiConnectionTimeout = 20000;
-  static unsigned long lastConnectionTime = 0;
   if (millis() - lastSyncTime >= syncInterval) {
     syncTime();
     lastSyncTime = millis();
   }
+  //-------------------------------------------------------------------------//
+
+  //------------------------wifi connection (1min)----------------------//
+  unsigned long wifiConnectionTimeout = 60000;
+  static unsigned long lastConnectionTime = 0;
   if(WiFi.status() != WL_CONNECTED && millis()-lastConnectionTime >= wifiConnectionTimeout ) {
-    //retry connection when connection is lost
     lastConnectionTime = millis();
     Serial.println("wifi disconnected attempting reconnection");
     establishNetwork(true);
   }
+  //-----------------------------------------------------------------------//
+
+
   if(isSavedSubscriptionActive() != isActive){
 
     Serial.println("changes detected starting server");
     Serial.printf("saved : %d  , isActive : %d",isSavedSubscriptionActive(),isActive );
     startWebServer();
   }
-  delay(1000);
+  delay(500);
 }
 
 bool lightStatus()
 {
-  uint16_t current_time = getCurrentTimeInMinutes(); // returns in form of minutes eg: 5:1 pm = 1021m
+  uint16_t current_time = getCurrentTimeInSeconds(); // returns in form of minutes eg: 5:1 pm = 1021m
+  Serial.print(pinNames[SWITCH_PIN]);
 
   for (int i = 0; i < num_schedules; i++)
   {
     if (schedules[i].isDeleted)
       continue;
-    int start_time = schedules[i].start_time_hour * 60 + schedules[i].start_time_min;
-    int duration = schedules[i].duration;
+    int start_time = schedules[i].start_time_hour * 3600 + schedules[i].start_time_min *60 ;
+    int duration = schedules[i].duration_minutes *60 + schedules[i].duration_seconds;
 
     if (start_time <= current_time && current_time < start_time + duration)
     {
-      Serial.printf("bulb D0 : ON (%d)\n",!defaultSwitchState);
+      Serial.printf(" : ON (%d)",!defaultSwitchState);
       return !defaultSwitchState;
     }
   }
-  Serial.printf("bulb D0 : OFF (%d)",defaultSwitchState);
+  Serial.printf(" : OFF (%d)",defaultSwitchState);
   return defaultSwitchState;
 }
 
@@ -232,13 +256,13 @@ bool syncTime()
   }
 }
 
-uint16_t getCurrentTimeInMinutes()
+uint16_t getCurrentTimeInSeconds()
 {
   time_t now = time(nullptr);
   struct tm *timeinfo = localtime(&now);
 
   // Print the date and time
-  Serial.printf("Current time: %04d-%02d-%02d %02d:%02d:%02d\n",
+  Serial.printf(" | Time: %04d-%02d-%02d %02d:%02d:%02d\n",
                 timeinfo->tm_year + 1900,
                 timeinfo->tm_mon + 1,
                 timeinfo->tm_mday,
@@ -246,7 +270,7 @@ uint16_t getCurrentTimeInMinutes()
                 timeinfo->tm_min,
                 timeinfo->tm_sec);
 
-  return timeinfo->tm_hour * 60 + timeinfo->tm_min;
+  return timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec;
 }
 void startWebServer(){
   bool expiry_date_set = preferences.getBool("expiry_date_set");
@@ -269,6 +293,7 @@ void startWebServer_ACTIVE()
   server.on("/settings", HTTP_POST, handleSettings_POST);
   server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
   server.on("/sync-time",HTTP_POST, handleSyncTime_POST);
+  server.on("/urgent-on",HTTP_POST, handleUrgentOn_POST);
   server.begin();
   Serial.println("light Scheduling HTTP Server started");
 }
@@ -293,8 +318,9 @@ void startWebServer_EXPIRED()
               
   server.on("/settings", HTTP_GET, handleSettings_GET);
   server.on("/settings", HTTP_POST, handleSettings_POST);
-  server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
   server.on("/recheck-subscription",HTTP_POST, handleRecheckSubscription_POST);
+  server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
+  server.on("/sync-time",HTTP_POST, handleSyncTime_POST);
   server.begin();
   Serial.println("Subscription Expired Server");
 }
@@ -314,6 +340,11 @@ void handleRoot_GET()
     <html>
       <head>
         <meta charset='UTF-8'><title>Switch Scheduler</title>
+        <style>
+          form{
+            display:inline;
+          }
+        </style>
       </head>
       <body>
         <h1 style="margin:0px">
@@ -343,7 +374,7 @@ void handleRoot_GET()
     html += R"(
       <tr>
         <td>)"+ String(start_time_hour) +":" + String(schedules[i].start_time_min) + " " + format + R"(</td>
-        <td>)" + String(schedules[i].duration) + R"( min</td>
+        <td>)" + String(schedules[i].duration_minutes) + " min :" + String(schedules[i].duration_seconds) + R"( sec</td>
         <td>
           <form method='POST' action='/delete-schedule'>
             <input type='hidden' name='index' value=")" + i + R"(">
@@ -358,9 +389,16 @@ void handleRoot_GET()
         </table><br><br>
         <form method='POST'>
           Start Time: <input type='time' name='start_time'><br><br>
-          Duration : &nbsp&nbsp<input type='text' name='duration' placeholder='minutes'><br><br>
+          Duration : &nbsp&nbsp
+          <input type='number' name='duration_minutes' placeholder='min' min="0" max="1439" size="5" >
+          <input type='number' name='duration_seconds' placeholder='sec' min="0" max="59" size="5" >
+          <br><br>
           <input type='submit' value='Save'>
         </form>
+          &nbsp;&nbsp;&nbsp;
+        <form method='POST' action='/urgent-on'>
+          <button name="urgent-on" type='submit'>Urgent ()"+String(UrgentOnTime / 1000) + R"(s)</button>
+        </form><br><br>
         <form method='POST' action='/delete-all-schedule'>
           <button type='submit'>Delete All Schedules</button>
         </form>
@@ -376,7 +414,8 @@ void handleRoot_POST()
   TEST_schedules_variable_data();
   String start_time_hour = "";
   String start_time_min = "";
-  String duration = "";
+  String duration_minutes = "";
+  String duration_seconds = "";
 
   for (int i = 0; i < MAX_SCHEDULES; i++)
   {
@@ -388,13 +427,16 @@ void handleRoot_POST()
     // Serial.println(server.arg("plain"));
     start_time_hour = server.arg("start_time").substring(0, 2);
     start_time_min = server.arg("start_time").substring(3);
-    duration = server.arg("duration");
+    duration_minutes = server.arg("duration_minutes");
+    duration_seconds = server.arg("duration_seconds");
 
-    if (start_time_hour != "" && duration != "" && schedules[i].isDeleted)
+    if (start_time_hour != "" && duration_minutes != "" && duration_seconds != "" && schedules[i].isDeleted)
     {
+      Serial.printf("Writing Schedule to Index : %d\n",i);
       schedules[i].start_time_hour = start_time_hour.toInt();
       schedules[i].start_time_min = start_time_min.toInt();
-      schedules[i].duration = duration.toInt();
+      schedules[i].duration_minutes = duration_minutes.toInt();
+      schedules[i].duration_seconds = duration_seconds.toInt();
       schedules[i].isDeleted = false;
       break;
     }
@@ -560,6 +602,19 @@ void handleSyncTime_POST(){
   server.sendHeader("Location", "/settings");
   server.send(303);
 }
+void handleUrgentOn_POST(){
+  digitalWrite(SWITCH_PIN,!defaultSwitchState);
+
+  server.sendHeader("Location", "/");
+  server.send(303);
+
+  delay(UrgentOnTime);
+  if(isSavedSubscriptionActive()){
+    digitalWrite(SWITCH_PIN,lightStatus());
+  }else{
+    digitalWrite(SWITCH_PIN,defaultSwitchState);
+  }
+}
 void handleRecheckSubscription_POST(){
   if(subscriptionStatus() == true){
     Serial.println("subscription activated on recheck");
@@ -616,7 +671,7 @@ void deleteSchedule(int index)
   schedules[index].isDeleted = true;
   saveSchedulesToEEPROM();
   TEST_schedules_variable_data();
-  digitalWrite(LED_PIN, lightStatus());
+  digitalWrite(SWITCH_PIN, lightStatus());
 }
 
 void deleteAllSchedules()
@@ -628,7 +683,7 @@ void deleteAllSchedules()
   for (int i = 0; i < MAX_SCHEDULES; i++)
     schedules[i].isDeleted = true;
 
-  digitalWrite(LED_PIN, defaultSwitchState);
+  digitalWrite(SWITCH_PIN, defaultSwitchState);
   saveSchedulesToEEPROM();
   EEPROM.end();
 }
@@ -682,7 +737,7 @@ bool subscriptionStatus()
       Serial.println(error.f_str());
       return false;
     }
-    status = response["status"];                          // true
+    status = response["status"];                          //true -record exists
     expired = response["expired"];                        // false
     mac_address = response["mac_address"];                // "40:F5:20:23:01:2E"
     expiry_date_year = response["expiry_date"]["year"];   // 2023
@@ -710,13 +765,6 @@ bool subscriptionStatus()
   }
   http.end();
 
-  Serial.printf("Status: %d\n", status);
-  Serial.printf("Expired: %d \n", expired);
-  Serial.printf("Mac Address: %s\n", mac_address);
-  Serial.printf("Expiry date year: %d\n", expiry_date_year);
-  Serial.printf("Expiry date month: %d\n", expiry_date_month);
-  Serial.printf("Expiry date day: %d\n", expiry_date_day);
-
 
 
   // time_t now = time(nullptr);
@@ -742,6 +790,14 @@ bool subscriptionStatus()
   {
     Serial.println("Subscription Active");
     preferences.putBool("expiry_date_set",HIGH);
+
+    Serial.printf("Status: %d\n", status);
+    Serial.printf("Expired: %d \n", expired);
+    Serial.printf("Mac Address: %s\n", mac_address);
+    Serial.printf("Expiry date year: %d\n", expiry_date_year);
+    Serial.printf("Expiry date month: %d\n", expiry_date_month);
+    Serial.printf("Expiry date day: %d\n", expiry_date_day);
+
     isActive = true;
     return true;
   }
@@ -784,9 +840,9 @@ bool isSavedSubscriptionActive(){
 void TEST_schedules_variable_data()
 {
   Serial.println("-------TESTING SCHEDULES DATA------------");
-  Serial.printf("Index | hour | tMinutes | Duration | Deleted?\n");
+  Serial.printf("Index | hour | tMinutes | Duration(M) | Duration(S) | Deleted?\n");
   for (int i = 0; i < MAX_SCHEDULES; i++)  {
-    Serial.printf("%d     |  %d  |   %d     |   %d   | %d\n", i, schedules[i].start_time_hour, schedules[i].start_time_min, schedules[i].duration, schedules[i].isDeleted);
+    Serial.printf("%d     |  %d  |   %d     |   %d   |   %d   | %d\n", i, schedules[i].start_time_hour, schedules[i].start_time_min,schedules[i].duration_minutes, schedules[i].duration_seconds, schedules[i].isDeleted);
   }
   Serial.println("-----------------------------------------");
 }
