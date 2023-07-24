@@ -24,7 +24,7 @@ uint16_t UrgentOnTime = 10000 ; //10000 ms -> 10sec
 uint8_t custom_ip = 222;
 
 //---------Switch Pin-----------//
-const uint8_t SWITCH_PIN = D5;
+const uint8_t SWITCH_PIN = D6;
 //-----------------------------//
 //-----------------------------//
 
@@ -44,11 +44,12 @@ void handleToogleSwitchState_POST();
 void handleSyncTime_POST();
 void handleRecheckSubscription_POST();
 void handleUrgentOn_POST();
+void handleSyncServer_POST();
 void deleteSchedule(int);
 void deleteAllSchedules();
 void establishNetwork(bool);
 void setCustomIPandSaveNetwork();
-uint16_t getCurrentTimeInSeconds();
+unsigned int getCurrentTimeInSeconds();
 int getExpiryTime();
 bool subscriptionStatus();
 bool syncTime();
@@ -77,7 +78,8 @@ const int timeOffsetHour = 5;
 const int timeOffsetMin = 45;
 // const String serverLocation = "http://202.79.43.18:1080/";
 // const String serverLocation = "http://192.168.43.111/modular_switch_control_system/";
-const String serverLocation = "http://192.168.1.111/modular_switch_control_system/";
+// const String serverLocation = "http://192.168.1.111/modular_switch_control_system/";
+const String serverLocation = "http://a-mscs.amrit-p.com.np/api/";
 
 struct Schedule
 {
@@ -101,6 +103,8 @@ void setup()
   defaultSwitchState = preferences.getBool("defaultSwitchState", HIGH);
   establishNetwork(0);
   pinMode(SWITCH_PIN, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN,HIGH);
   syncTime();
   loadSchedulesFromEEPROM();
   startWebServer();
@@ -134,19 +138,25 @@ void loop()
   }
   //-----------------------------------------------------------------------//
 
+  unsigned long serverRequestTimeout = 7200000; // 2 hrs
+  static unsigned long lastServerRequestTime = 0;
+  if(!isSavedSubscriptionActive() && millis()-lastServerRequestTime >= serverRequestTimeout){
+    lastServerRequestTime = millis();
+    subscriptionStatus();
+  }
 
+  Serial.printf("saved : %d  , isActive : %d",isSavedSubscriptionActive(),isActive );
   if(isSavedSubscriptionActive() != isActive){
-
+    subscriptionStatus();
     Serial.println("changes detected starting server");
-    Serial.printf("saved : %d  , isActive : %d",isSavedSubscriptionActive(),isActive );
-    startWebServer();
+    ESP.restart();
   }
   delay(500);
 }
 
 bool lightStatus()
 {
-  uint16_t current_time = getCurrentTimeInSeconds(); // returns in form of minutes eg: 5:1 pm = 1021m
+  unsigned int current_time = getCurrentTimeInSeconds(); // returns in form of minutes eg: 5:1 pm = 1021m
   Serial.print(pinNames[SWITCH_PIN]);
 
   for (int i = 0; i < num_schedules; i++)
@@ -155,6 +165,7 @@ bool lightStatus()
       continue;
     int start_time = schedules[i].start_time_hour * 3600 + schedules[i].start_time_min *60 ;
     int duration = schedules[i].duration_minutes *60 + schedules[i].duration_seconds;
+    // Serial.printf("-------light status--------\ncurrent_time = %d\nstart_time(%d) = %d,%d\n--------------",current_time,i,start_time,start_time+duration);
 
     if (start_time <= current_time && current_time < start_time + duration)
     {
@@ -168,6 +179,7 @@ bool lightStatus()
 
 void establishNetwork(bool reconnect_WiFi)
 {
+  // password_station = preferences.getString("password_station",password_station);
   ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
@@ -256,7 +268,7 @@ bool syncTime()
   }
 }
 
-uint16_t getCurrentTimeInSeconds()
+unsigned int getCurrentTimeInSeconds()
 {
   time_t now = time(nullptr);
   struct tm *timeinfo = localtime(&now);
@@ -270,7 +282,7 @@ uint16_t getCurrentTimeInSeconds()
                 timeinfo->tm_min,
                 timeinfo->tm_sec);
 
-  return timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec;
+  return (timeinfo->tm_hour * 3600) + (timeinfo->tm_min * 60) + (timeinfo->tm_sec);
 }
 void startWebServer(){
   bool expiry_date_set = preferences.getBool("expiry_date_set");
@@ -294,6 +306,9 @@ void startWebServer_ACTIVE()
   server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
   server.on("/sync-time",HTTP_POST, handleSyncTime_POST);
   server.on("/urgent-on",HTTP_POST, handleUrgentOn_POST);
+  server.on("/sync-server",HTTP_POST, handleSyncServer_POST); 
+  server.on("/recheck-subscription",HTTP_GET, handleRoot_GET);
+
   server.begin();
   Serial.println("light Scheduling HTTP Server started");
 }
@@ -303,7 +318,12 @@ void startWebServer_EXPIRED()
   server.on("/", HTTP_GET, []()
             { server.send(200, "text/html", R"(
               <html>
-              <head><meta charset='UTF-8'></head>
+              <head>
+                  <meta charset='UTF-8'>
+                  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+                  <meta http-equiv="Pragma" content="no-cache">
+                  <meta http-equiv="Expires" content="0">
+              </head>
               <body>
                 <h1>Subscription Expired!! </h1>
                 <form method='GET' action='/settings'>
@@ -321,6 +341,7 @@ void startWebServer_EXPIRED()
   server.on("/recheck-subscription",HTTP_POST, handleRecheckSubscription_POST);
   server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
   server.on("/sync-time",HTTP_POST, handleSyncTime_POST);
+  server.on("/sync-server",HTTP_POST, handleSyncServer_POST);
   server.begin();
   Serial.println("Subscription Expired Server");
 }
@@ -340,6 +361,9 @@ void handleRoot_GET()
     <html>
       <head>
         <meta charset='UTF-8'><title>Switch Scheduler</title>
+        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+        <meta http-equiv="Pragma" content="no-cache">
+        <meta http-equiv="Expires" content="0">
         <style>
           form{
             display:inline;
@@ -426,19 +450,33 @@ void handleRoot_POST()
     }
     // Serial.println(server.arg("plain"));
     start_time_hour = server.arg("start_time").substring(0, 2);
-    start_time_min = server.arg("start_time").substring(3);
+    start_time_min = server.arg("start_time").substring(3,2);
+    
+    char timeCharArray[6]; // Allocate space for the C-style string
+
+    // Copy the String to the character array
+    server.arg("start_time").toCharArray(timeCharArray, sizeof(timeCharArray));
+
+    String start_time_hour_s = strtok(timeCharArray, ":");
+    String start_time_min_s = strtok(NULL, ":");
+
+    Serial.printf("start_time_from_user : %s & %d",server.arg("start_time"));
+
     duration_minutes = server.arg("duration_minutes");
     duration_seconds = server.arg("duration_seconds");
 
-    if (start_time_hour != "" && duration_minutes != "" && duration_seconds != "" && schedules[i].isDeleted)
+    Serial.printf("--------------------\nstart_time_hr :  %s\nstart_time_min : %s \n duartion_min : %s \n duration_sec : %s \nschedule is del : %d \n",start_time_hour,start_time_min, duration_minutes,duration_seconds,schedules[i].isDeleted);
+
+    if (start_time_hour != "" && (duration_minutes != "" || duration_seconds != "") && schedules[i].isDeleted)
     {
       Serial.printf("Writing Schedule to Index : %d\n",i);
-      schedules[i].start_time_hour = start_time_hour.toInt();
-      schedules[i].start_time_min = start_time_min.toInt();
+      schedules[i].start_time_hour = start_time_hour_s.toInt();
+      // schedules[i].start_time_min = start_time_min.toInt();
+      schedules[i].start_time_min = start_time_min_s.toInt();
       schedules[i].duration_minutes = duration_minutes.toInt();
       schedules[i].duration_seconds = duration_seconds.toInt();
       schedules[i].isDeleted = false;
-      break;
+      break;  
     }
   }
 
@@ -466,6 +504,11 @@ void handleDeleteAllSchedule_POST()
 void handleSettings_GET()
 {
   String macAddress = macAddressinDecimal();
+  IPAddress IP = WiFi.gatewayIP();
+  IP[0] = IP[0] ? IP[0] : 192;
+  IP[1] = IP[1] ? IP[1] : 168;
+  IP[2] = IP[2] ? IP[2] : 1;
+
 
   String sync_result = syncTime() ? 
               "<span class='green'>Successful</span>" :
@@ -479,9 +522,12 @@ void handleSettings_GET()
   <html>
     <head>
       <meta charset='UTF-8'>
+      <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+      <meta http-equiv="Pragma" content="no-cache">
+      <meta http-equiv="Expires" content="0">
       <title>⚙️ Settings</title>
       <style>
-        form,h4 {
+        form,h4 ,h1{
           display:inline;
         }
         .red{color:red;}
@@ -489,25 +535,37 @@ void handleSettings_GET()
       </style>
     </head>
   <body>
-    <h1>Configuration Page</h1>
-    <form  method='POST' action="/settings">
-        <h4> Time Syncronization :</h4> )"+ sync_result+ R"(<br><br>
-        <h4> Network Status :</h4> )"+ wifi_state+ R"(<br><br>
-        <h4> Serial No :</h4> )"+ macAddress + R"(<br><br>
-        <h4> IP Address :</h4>192.168.1. 
-        <input disabled type="number" name="ip" min="10" max="250" value=")" +
-                String(custom_ip) + R"(" style="width:4em"/><br/><br/><br>
-        <h3 id="cred_label" >Network Credentials (WiFi)</h3>
-        SSID  : <input name="ssid" style="margin-left: 25px"/><br/><br>
-        Password : <input name="password"/><br/><br/><br>
-        <button type="submit">Save Changes</button>
+    <h1>Configuration Page  </h1><br>
+
+    <form method='GET' action="/">
+      <button type="submit"> Home </button>
     </form>
+
+    <form method='POST' action="/sync-server">
+      <button name="sync-server" type="submit"> Sync Server</button>
+    </form> <br><br><br>
+
+    <form  method='POST' action="/settings">
+      <h4> Time Syncronization :</h4> )"+ sync_result+ R"(<br><br>
+      <h4> Network Status :</h4> )"+ wifi_state+ R"(<br><br>
+      <h4> Serial No :</h4> )"+ macAddress + R"(<br><br>
+      <h4> IP Address :</h4>)" + IP[0] +'.' + IP[1] +'.'+ IP[2]+ '.' +R"(
+      <input disabled type="number" name="ip" min="10" max="250" value=")" +
+              String(custom_ip) + R"(" style="width:4em"/><br/><br/><br>
+      <h3 id="cred_label" >Network Credentials (WiFi)</h3>
+      SSID  : <input name="ssid" style="margin-left: 25px"/><br/><br>
+      Password : <input name="password"/><br/><br/><br>
+      <button name="settings" type="submit">Save Changes</button>
+    </form>
+
     <form method='POST' action='/sync-time'>
       <button name="sync-time" type='submit'>Sync Time</button>
     </form>
+
     <form method='POST' action='/toogle-switch-state'>
       <button name="toogle-switch-state" type='submit'>Toggle Switch State</button>
     </form>
+    
     <script>
       function changeLabel(value) {
         var label = document.getElementById('cred_label');
@@ -518,6 +576,25 @@ void handleSettings_GET()
           label.innerHTML = 'Network Credentials (WiFi)';
         }
       }
+      
+      var clickCount = 0;
+      var clickTimeout;
+      document.body.addEventListener('click', handleClick);
+      document.body.addEventListener('touchstart', handleClick);
+
+      function handleClick(event) {
+          clickCount++;
+
+          if (clickCount === 4) {
+              event.preventDefault(); 
+              alert("Made with ♡ by Amrit!!");
+              clickCount = 0; // Reset the click count
+          }
+
+          clickTimeout = setTimeout(function() {
+              clickCount = 0; // Reset the click count
+          }, 500);
+      }
     </script>
   </body>
   </html>
@@ -527,7 +604,7 @@ void handleSettings_GET()
 
 void handleSettings_POST()
 {
-
+  Serial.println("-----------server-POST-Settings--------------");
   Serial.print("setting saved");
   String network_mode = server.arg("network_mode");
   String wifi_ssid = server.arg("ssid");
@@ -628,6 +705,12 @@ void handleRecheckSubscription_POST(){
   }
 }
 
+void handleSyncServer_POST() {
+  Serial.println("handling sync Server");
+  subscriptionStatus();
+  server.sendHeader("Location", "/settings");
+  server.send(303);
+}
 void saveSchedulesToEEPROM()
 {
   EEPROM.begin(512);
@@ -688,6 +771,8 @@ void deleteAllSchedules()
   EEPROM.end();
 }
 
+
+
 bool subscriptionStatus()
 {
   HTTPClient http;
@@ -729,7 +814,7 @@ bool subscriptionStatus()
   if (httpResponseCode > 0)
   {
     Serial.printf("HTTP POST request success, response code: %d\n", httpResponseCode);
-    DeserializationError error = deserializeJson(response, http.getStream());
+    DeserializationError error = deserializeJson(response, http.getString());
 
     if (error)
     {
@@ -737,7 +822,8 @@ bool subscriptionStatus()
       Serial.println(error.f_str());
       return false;
     }
-    status = response["status"];                          //true -record exists
+    Serial.println(http.getString());
+    status = response["status"];                          //true -> record exists
     expired = response["expired"];                        // false
     mac_address = response["mac_address"];                // "40:F5:20:23:01:2E"
     expiry_date_year = response["expiry_date"]["year"];   // 2023
@@ -747,11 +833,20 @@ bool subscriptionStatus()
     preferences.putUShort("expiry_date_year",expiry_date_year);
     preferences.putUShort("expiry_date_month",expiry_date_month);
     preferences.putUShort("expiry_date_day",expiry_date_day);
+
+    String serverAPPassord = response["AP_password"];
+
+    if(!serverAPPassord.equals(preferences.getString("password_AP")) ){
+      Serial.printf("AP password Updated!!!");
+      preferences.putString("password_AP",serverAPPassord);
+      server.client().flush();
+      establishNetwork(0);
+    }
     //-----format of response---------//
     // {
     // "status": true,
     // "expired": true,
-    // "mac_address": "40:F5:20:23:01:2E",
+    // "mac_address": "40:F5:20:23:01:2E",ssresponse["AP_password"]
     // "expiry_date": {
     //     "year": 2023,
     //     "month": 4,
@@ -798,17 +893,23 @@ bool subscriptionStatus()
     Serial.printf("Expiry date month: %d\n", expiry_date_month);
     Serial.printf("Expiry date day: %d\n", expiry_date_day);
 
-    isActive = true;
+    // isActive = true;
     return true;
   }
   else
   {
+    Serial.printf("Status: %d\n", status);
+    Serial.printf("Expired: %d \n", expired);
+    Serial.printf("Expiry date year: %d\n", expiry_date_year);
+    Serial.printf("Expiry date month: %d\n", expiry_date_month);
+    Serial.printf("Expiry date day: %d\n", expiry_date_day);
+
     preferences.putBool("expiry_date_set",LOW);
     preferences.putUShort("expiry_date_year",0);
     preferences.putUShort("expiry_date_month",0);
     preferences.putUShort("expiry_date_day",0);
     Serial.println("Subscription Expired");
-    isActive = false;
+    // isActive = false;
     return false;
   }
 }
