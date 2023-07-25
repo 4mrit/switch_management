@@ -45,6 +45,7 @@ void handleSyncTime_POST();
 void handleRecheckSubscription_POST();
 void handleUrgentOn_POST();
 void handleSyncServer_POST();
+void handleRestart_POST();
 void deleteSchedule(int);
 void deleteAllSchedules();
 void establishNetwork(bool);
@@ -308,6 +309,8 @@ void startWebServer_ACTIVE()
   server.on("/urgent-on",HTTP_POST, handleUrgentOn_POST);
   server.on("/sync-server",HTTP_POST, handleSyncServer_POST); 
   server.on("/recheck-subscription",HTTP_GET, handleRoot_GET);
+  server.on("/restart", HTTP_POST, handleRestart_POST);
+  server.on("/restart", HTTP_GET, handleSettings_GET);
 
   server.begin();
   Serial.println("light Scheduling HTTP Server started");
@@ -342,6 +345,8 @@ void startWebServer_EXPIRED()
   server.on("/toogle-switch-state", HTTP_POST, handleToogleSwitchState_POST);
   server.on("/sync-time",HTTP_POST, handleSyncTime_POST);
   server.on("/sync-server",HTTP_POST, handleSyncServer_POST);
+  server.on("/restart", HTTP_POST, handleRestart_POST);
+  server.on("/restart", HTTP_GET, handleSettings_GET);
   server.begin();
   Serial.println("Subscription Expired Server");
 }
@@ -543,7 +548,13 @@ void handleSettings_GET()
 
     <form method='POST' action="/sync-server">
       <button name="sync-server" type="submit"> Sync Server</button>
-    </form> <br><br><br>
+    </form> 
+    
+    <form method='POST' action="/restart">
+      <button type="submit"> Restart </button>
+    </form>
+
+    <br><br><br>
 
     <form  method='POST' action="/settings">
       <h4> Time Syncronization :</h4> )"+ sync_result+ R"(<br><br>
@@ -703,6 +714,12 @@ void handleRecheckSubscription_POST(){
     server.sendHeader("Location", "/");
     server.send(303);
   }
+}
+
+void handleRestart_POST(){
+  server.sendHeader("Location", "/");
+  server.send(303);
+  ESP.restart();
 }
 
 void handleSyncServer_POST() {
