@@ -17,7 +17,7 @@ WiFiManager wifi;
 Preferences preferences;
 
 //---------Urgent Ring Time-----//
-uint16_t UrgentOnTime = 10000 ; //10000 ms -> 10sec
+uint16_t UrgentOnTime = 5000 ; //10000 ms -> 10sec
 //------------------------------//
 
 //---------Static IP-----------//
@@ -57,6 +57,7 @@ bool syncTime();
 void reconnectNetworkWithCustomIP();
 void saveCredentialsSTATION();
 bool isSavedSubscriptionActive();
+bool blink=HIGH;
 String macAddressinDecimal();
 //--test/debug functions (meant to be removed on production)--//
 void TEST_schedules_variable_data();
@@ -67,19 +68,15 @@ const char* pinNames[] = {
     "D3", "D10", "D4", "D9", "D2", "D1", "-", "-", "-", "D11", "D12", "-", "D6", "D7", "D5", "D8", "D0"
 };
 
-
-
 String ssid_STATION = "1011001";
 String password_STATION = "dr0wss@p";
 String ssid_AP = "Smart_Switch";
 String password_AP = "dr0wss@p";
+
 bool isModeStation = true;
 bool isActive = false;
 const int timeOffsetHour = 5;
 const int timeOffsetMin = 45;
-// const String serverLocation = "http://202.79.43.18:1080/";
-// const String serverLocation = "http://192.168.43.111/modular_switch_control_system/";
-// const String serverLocation = "http://192.168.1.111/modular_switch_control_system/";
 const String serverLocation = "http://a-mscs.amrit-p.com.np/api/";
 
 struct Schedule
@@ -104,8 +101,8 @@ void setup()
   defaultSwitchState = preferences.getBool("defaultSwitchState", HIGH);
   establishNetwork(0);
   pinMode(SWITCH_PIN, OUTPUT);
+  digitalWrite(SWITCH_PIN , defaultSwitchState);
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN,HIGH);
   syncTime();
   loadSchedulesFromEEPROM();
   startWebServer();
@@ -117,7 +114,6 @@ void loop()
     digitalWrite(SWITCH_PIN, lightStatus());
   }
 
-
   server.handleClient();
 
   //------------------------time sync(1day)----------------------//
@@ -128,6 +124,7 @@ void loop()
     lastSyncTime = millis();
   }
   //-------------------------------------------------------------------------//
+
 
   //------------------------wifi connection (1min)----------------------//
   unsigned long wifiConnectionTimeout = 60000;
@@ -152,6 +149,8 @@ void loop()
     Serial.println("changes detected starting server");
     ESP.restart();
   }
+  digitalWrite(LED_BUILTIN,blink);
+  blink = !blink;
   delay(500);
 }
 
@@ -180,8 +179,8 @@ bool lightStatus()
 
 void establishNetwork(bool reconnect_WiFi)
 {
-  // password_station = preferences.getString("password_station",password_station);
   ssid_STATION = preferences.getString("ssid_STATION",ssid_STATION);
+  password_STATION = preferences.getString("password_station",password_STATION);
   ssid_AP = preferences.getString("ssid_AP",ssid_AP);
   password_AP = preferences.getString("password_AP",password_AP);
 
@@ -210,6 +209,7 @@ void establishNetwork(bool reconnect_WiFi)
     Serial.println("Station Connection Unsuccessful!to\nSSID : "+ssid_STATION + "\nPWD : "+password_STATION);
   }
   if(reconnect_WiFi == false){
+    Serial.println("attemptiong starting ap mode");
     if(WiFi.softAP(ssid_AP,password_AP )){
       Serial.print("Soft ap successful \n IP : ");
       Serial.println(WiFi.softAPIP());
@@ -515,9 +515,16 @@ void handleSettings_GET()
   IP[2] = IP[2] ? IP[2] : 1;
 
 
-  String sync_result = syncTime() ? 
-              "<span class='green'>Successful</span>" :
-              "<span class='red'>Unsuccessful</span>";
+  // String sync_result = syncTime() ? 
+  //             "<span class='green'>Successful</span>" :
+  //             "<span class='red'>Unsuccessful</span>";
+   time_t now = time(nullptr);
+  struct tm *timeinfo = localtime(&now);
+
+  String sync_result ="<span class='green'>"+
+                      String (timeinfo->tm_hour) + " : " +
+                      String (timeinfo->tm_min) +                        
+                       +"</span>";
 
   String wifi_state = WiFi.status() == WL_CONNECTED ? 
               "<span class='green'>Connected</span>" : 
@@ -558,7 +565,7 @@ void handleSettings_GET()
 
     <form  method='POST' action="/settings">
       <h4> Time Syncronization :</h4> )"+ sync_result+ R"(<br><br>
-      <h4> Network Status :</h4> )"+ wifi_state+ R"(<br><br>
+      <h4> Network </h4>( )"+WiFi.SSID() +R"( ) : )"+ wifi_state+ R"(<br><br>
       <h4> Serial No :</h4> )"+ macAddress + R"(<br><br>
       <h4> IP Address :</h4>)" + IP[0] +'.' + IP[1] +'.'+ IP[2]+ '.' +R"(
       <input disabled type="number" name="ip" min="10" max="250" value=")" +
